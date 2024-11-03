@@ -1,206 +1,69 @@
-#!/bin/bash
-# install-prometheus.sh
-
-# Function to check if kubectl can access a cluster
-check_kubernetes_access() {
-    if kubectl get nodes &>/dev/null; then
-        echo "Kubernetes cluster is accessible"
-        return 0
-    else
-        echo "No Kubernetes cluster found"
-        return 1
-    fi
-}
-
-# Function to create kind cluster if needed
-create_kind_cluster() {
-    if ! command -v kind &>/dev/null; then
-        echo "Kind is not installed. Please install kind first."
-        exit 1
-    fi
-
-    cat <<EOF | kind create cluster --name kind-prometheus --config=-
-kind: Cluster
-apiVersion: kind.x-k8s.io/v1alpha4
-nodes:
-- role: control-plane
-  extraMounts:
-  - hostPath: ./prometheus-data
-    containerPath: /prometheus-data
-EOF
-    
-    echo "Kind cluster 'kind-prometheus' created"
-}
-
-# Check for existing cluster, create kind cluster if needed
-if ! check_kubernetes_access; then
-    echo "Creating kind cluster..."
-    create_kind_cluster
+unset USE_KIND
+# Check if kubectl is available in the system
+if kubectl 2>/dev/null >/dev/null; then
+  # Check if kubectl can communicate with a Kubernetes cluster
+  if kubectl get nodes 2>/dev/null >/dev/null; then
+    echo "Kubernetes cluster is available. Using existing cluster."
+    export USE_KIND=0
+  else
+    echo "Kubernetes cluster is not available. Creating a Kind cluster..."
+    export USE_KIND=X
+  fi
+else
+  echo "kubectl is not installed. Please install kubectl to interact with Kubernetes."
+  export USE_KIND=X
 fi
 
-# Create namespace
-kubectl create namespace prometheus
+if [ "X${USE_KIND}" == "XX" ]; then
+    # Make sure cluster exists if Mac
+    kind  get clusters 2>&1 | grep "kind-prometheus"
+    if [ $? -gt 0 ]
+    then
+        envsubst < kind-config.yaml.template > kind-config.yaml
+        kind create cluster --config kind-config.yaml --name kind-prometheus
+    fi
 
-# Create persistent volume and claim
-cat <<EOF | kubectl apply -f -
-apiVersion: v1
-kind: PersistentVolume
-metadata:
-  name: prometheus-pv
-  namespace: prometheus
-spec:
-  capacity:
-    storage: 10Gi
-  accessModes:
-    - ReadWriteOnce
-  persistentVolumeReclaimPolicy: Retain
-  storageClassName: standard
-  hostPath:
-    path: /prometheus-data
-EOF
+    # Make sure create cluster succeeded
+    kind  get clusters 2>&1 | grep "kind-prometheus"
+    if [ $? -gt 0 ]
+    then
+        echo "Creation of cluster failed. Aborting."
+        exit 666
+    fi
+fi
 
-cat <<EOF | kubectl apply -f -
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: prometheus-pvc
-  namespace: prometheus
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 10Gi
-  storageClassName: standard
-EOF
+# add metrics
+kubectl apply -f https://dev.ellisbs.co.uk/files/components.yaml
 
-# Create ConfigMap for Prometheus config
-cat <<EOF | kubectl apply -f -
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: prometheus-config
-  namespace: prometheus
-data:
-  prometheus.yml: |
-    global:
-      scrape_interval: 15s
-      evaluation_interval: 15s
-    scrape_configs:
-      - job_name: 'prometheus'
-        static_configs:
-          - targets: ['localhost:9090']
-      - job_name: 'kubernetes-service-endpoints'
-        kubernetes_sd_configs:
-          - role: endpoints
-        relabel_configs:
-          - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_scrape]
-            action: keep
-            regex: true
-EOF
+# install local storage
+kubectl apply -f  local-storage-class.yml
 
-# Create RBAC rules for Prometheus
-cat <<EOF | kubectl apply -f -
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: prometheus
-rules:
-- apiGroups: [""]
-  resources:
-  - nodes
-  - nodes/proxy
-  - services
-  - endpoints
-  - pods
-  verbs: ["get", "list", "watch"]
-- apiGroups:
-  - extensions
-  resources:
-  - ingresses
-  verbs: ["get", "list", "watch"]
----
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: prometheus
-  namespace: prometheus
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: prometheus
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: prometheus
-subjects:
-- kind: ServiceAccount
-  name: prometheus
-  namespace: prometheus
-EOF
+# create renovate namespace, if it doesn't exist
+kubectl get ns prometheus 2> /dev/null
+if [ $? -eq 1 ]
+then
+    kubectl create namespace prometheus
+fi
 
-# Create Prometheus deployment with updated security context
-cat <<EOF | kubectl apply -f -
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: prometheus
-  namespace: prometheus
-  labels:
-    app: prometheus
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: prometheus
-  template:
-    metadata:
-      labels:
-        app: prometheus
-    spec:
-      securityContext:
-        fsGroup: 65534
-        runAsUser: 65534
-        runAsGroup: 65534
-        runAsNonRoot: true
-      serviceAccountName: prometheus
-      containers:
-      - name: prometheus
-        image: prom/prometheus:v2.44.0
-        args:
-          - "--config.file=/etc/prometheus/prometheus.yml"
-          - "--storage.tsdb.path=/prometheus"
-          - "--storage.tsdb.retention.time=15d"
-        ports:
-        - containerPort: 9090
-        volumeMounts:
-        - name: prometheus-config
-          mountPath: /etc/prometheus/
-        - name: prometheus-storage
-          mountPath: /prometheus
-      volumes:
-      - name: prometheus-config
-        configMap:
-          name: prometheus-config
-      - name: prometheus-storage
-        persistentVolumeClaim:
-          claimName: prometheus-pvc
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: prometheus
-  namespace: prometheus
-spec:
-  selector:
-    app: prometheus
-  ports:
-  - port: 9090
-    targetPort: 9090
-  type: ClusterIP
-EOF
+# create service
+kubectl apply -f prometheus.svc.yml
 
-echo "Prometheus deployment complete!"
-echo "To access Prometheus UI, run: kubectl port-forward -n prometheus svc/prometheus 9090:9090"
-echo "Then visit: http://localhost:9090"
+# sort out persistent volume
+if [ "X${USE_KIND}" == "XX" ];then
+  export NODE_NAME=$(kubectl get nodes |grep control-plane|cut -d\  -f1|head -1)
+  envsubst < prometheus.deploy.pv.kind.yml.template > prometheus.deploy.pv.yml
+else
+  export NODE_NAME=$(kubectl get nodes | grep -v ^NAME|grep -v control-plane|cut -d\  -f1|head -1)
+  envsubst < prometheus.deploy.pv.linux.yml.template > prometheus.deploy.pv.yml
+  echo mkdir -p ${PWD}/prometheus-data|ssh -o StrictHostKeyChecking=no ${NODE_NAME}
+fi
+kubectl apply -f prometheus.deploy.pv.yml
+
+# create common deployment
+kubectl apply -f prometheus.yml
+
+# wait for deployment to be available
+kubectl wait --for=condition=available deployment.apps/prometheus -n prometheus --timeout=300s
+
+# check status
+kubectl get all -n prometheus
