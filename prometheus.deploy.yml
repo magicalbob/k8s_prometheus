@@ -29,6 +29,14 @@ spec:
         - name: prometheus-config
           mountPath: /etc/prometheus/prometheus.yml
           subPath: prometheus.yml  # Mount only the prometheus.yml file
+      dnsPolicy: "None"
+      dnsConfig:
+        nameservers:
+          - 8.8.8.8
+          - 8.8.4.4
+        options:
+          - name: ndots
+            value: "5"
       volumes:
       - name: prometheus-storage
         persistentVolumeClaim:

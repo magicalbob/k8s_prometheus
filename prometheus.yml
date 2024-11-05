@@ -1,7 +1,12 @@
 global:
-  scrape_interval: 30s  # Set the global scrape interval
+  scrape_interval: 60s
+  evaluation_interval: 60s
 
 scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['192.168.0.124:9090']
+
   - job_name: 'elasticsearch'
     kubernetes_sd_configs:
       - role: endpoints
@@ -34,17 +39,23 @@ scrape_configs:
         regex: renovate;renovate  # Update with actual namespace and service name
 
   - job_name: 'nexus'
-    kubernetes_sd_configs:
-      - role: endpoints
-    relabel_configs:
-      - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name]
-        action: keep
-        regex: nexus;nexus  # Update with actual namespace and service name
+    scrape_interval: 120s
+    scrape_timeout: 120s
+    static_configs:
+      - targets: ['nexus.ellisbs.co.uk:443']
+    metrics_path: '/service/metrics/prometheus'
+    scheme: https
+    basic_auth:
+      username: 'admin'
+      password: ''
 
   - job_name: 'sonarqube'
-    kubernetes_sd_configs:
-      - role: endpoints
-    relabel_configs:
-      - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name]
-        action: keep
-        regex: sonarqube;sonarqube  # Update with actual namespace and service name
+    scrape_interval: 120s
+    scrape_timeout: 120s
+    static_configs:
+      - targets: ['sonarqube.ellisbs.co.uk:443']
+    metrics_path: '/api/monitoring/metrics'
+    scheme: https
+    basic_auth:
+      username: 'admin'
+      password: ''
