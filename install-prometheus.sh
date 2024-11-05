@@ -60,10 +60,13 @@ fi
 kubectl apply -f prometheus.deploy.pv.yml
 
 # create common deployment
-kubectl apply -f prometheus.yml
+kubectl apply -f prometheus.deploy.yml
 
 # wait for deployment to be available
 kubectl wait --for=condition=available deployment.apps/prometheus -n prometheus --timeout=300s
+
+# apply the configmap
+kubectl apply -f prometheus.configmap.yml
 
 # check status
 kubectl get all -n prometheus

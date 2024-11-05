@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: prometheus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      securityContext:
+        fsGroup: 65534  # Set fsGroup to enable write access for the container
+      serviceAccountName: prometheus-sa
+      containers:
+      - name: prometheus
+        image: prom/prometheus:latest
+        args:
+          - "--config.file=/etc/prometheus/prometheus.yml"  # Specify config path
+        ports:
+        - containerPort: 9090
+        volumeMounts:
+        - name: prometheus-storage
+          mountPath: /prometheus  # Default data path for Prometheus
+        - name: prometheus-config
+          mountPath: /etc/prometheus/prometheus.yml
+          subPath: prometheus.yml  # Mount only the prometheus.yml file
+      volumes:
+      - name: prometheus-storage
+        persistentVolumeClaim:
+          claimName: prometheus-pvc
+      - name: prometheus-config
+        configMap:
+          name: prometheus-config

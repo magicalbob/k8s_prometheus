@@ -1,29 +1,50 @@
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: prometheus
-  namespace: prometheus
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: prometheus
-  template:
-    metadata:
-      labels:
-        app: prometheus
-    spec:
-      securityContext:
-        fsGroup: 65534  # Set fsGroup to enable write access for the container
-      containers:
-      - name: prometheus
-        image: prom/prometheus:latest
-        ports:
-        - containerPort: 9090
-        volumeMounts:
-        - name: prometheus-storage
-          mountPath: /prometheus  # Default data path for Prometheus
-      volumes:
-      - name: prometheus-storage
-        persistentVolumeClaim:
-          claimName: prometheus-pvc
+global:
+  scrape_interval: 30s  # Set the global scrape interval
+
+scrape_configs:
+  - job_name: 'elasticsearch'
+    kubernetes_sd_configs:
+      - role: endpoints
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name]
+        action: keep
+        regex: elasticsearch;elasticsearch  # Update with actual namespace and service name
+
+  - job_name: 'gitlab'
+    static_configs:
+      - targets: ['192.168.0.124:8080']
+    metrics_path: '/-/metrics'
+    scheme: http
+    honor_labels: true
+
+  - job_name: 'gitlab-runner'
+    kubernetes_sd_configs:
+      - role: endpoints
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name]
+        action: keep
+        regex: gitlab-runner;gitlab-runner  # Update with actual namespace and service name
+
+  - job_name: 'renovate'
+    kubernetes_sd_configs:
+      - role: endpoints
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name]
+        action: keep
+        regex: renovate;renovate  # Update with actual namespace and service name
+
+  - job_name: 'nexus'
+    kubernetes_sd_configs:
+      - role: endpoints
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name]
+        action: keep
+        regex: nexus;nexus  # Update with actual namespace and service name
+
+  - job_name: 'sonarqube'
+    kubernetes_sd_configs:
+      - role: endpoints
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name]
+        action: keep
+        regex: sonarqube;sonarqube  # Update with actual namespace and service name
